@@ -1,0 +1,8 @@
+**/*.pyc
+**/*.pyo
+pythlib/*.so
+rules/x*
+dd0e0p
+tempdir
+cygwin
+compiletime.txt

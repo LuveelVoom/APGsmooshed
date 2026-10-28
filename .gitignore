@@ -1,0 +1,20 @@
+# build products
+**/*.o
+**/*.op
+**/*.gcda
+*.profraw
+*.profdata
+apgluxe
+apgluxe-profile
+
+# generated per rule by mkparams.py / lifelib
+includes/params.h
+lifelib/avxlife/lifelogic/
+
+# search output
+log.*.txt
+apgluxe-crashes.log
+
+# python
+__pycache__/
+**/*.pyc

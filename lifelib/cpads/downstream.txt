@@ -1,0 +1,3 @@
+link_directories("%BUILD%/lib")
+include_directories("%BUILD%/test/googletest-src/googletest/include")
+include_directories("%SOURCE%/include")
