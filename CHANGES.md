@@ -104,11 +104,14 @@ the uploaded name, which lifelib rejected, so that rebuild failed in the fork.
 Checked: off by default (census identical); Seeds (b2s, x86) skipped all 50
 test soups at maxpop and the haul completed.
 
+Skipped soups are counted (`aperiodicSoups` in `includes/stabilise.h`, once per
+soup in `censusSoup`, reset per haul) and reported in the progress lines and the
+haul summary, instead of the fork's one message per skipped soup.
+
 Kept as in the fork, but worth knowing:
 - `--maxgen` is checked separately in the two stabilisation phases (phase I
   counts its own steps, phase II its own generations).
 - The `HASHLIFE_ONLY` branch of `censusSoup` has no population check.
-- Skipped-soup messages from several threads can interleave on one line.
 
 
 5. Build and tooling
@@ -123,6 +126,10 @@ Kept as in the fork, but worth knowing:
 - `recompile.sh`: re-runs natively when started under Rosetta; the native/x86
   choice described in section 1. lifelib is vendored, so the
   `update-lifelib.sh` step (git submodule update) is gone.
+- Progress lines (`includes/searching.h`) every 2 s instead of 10 s, and also
+  while a batch of soups is running (upstream printed only between batches; a
+  100000-soup batch takes about 10 s on b3-qr4k5cek6cs23-a4er56aek). The
+  soup-count trigger is 200000 instead of 1000000.
 - `apgluxe-autorestart.sh`: restarts apgluxe after crash signals; logs them;
   gives up after 5 fast crashes in a row.
 - tests/: `kat.sh` (census known answers, per C++ standard library), `unit.sh`

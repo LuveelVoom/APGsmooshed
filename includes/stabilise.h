@@ -1,5 +1,14 @@
 #pragma once
 
+#include <atomic>
+
+#ifdef MAXPOP
+// Spaceinvaders: soups skipped as explosive (over MAXPOP or past MAXGEN) in the
+// current haul. Counted once per soup in censusSoup; reported with the progress
+// messages instead of one line per soup.
+std::atomic<uint64_t> aperiodicSoups(0);
+#endif
+
 /*
  * Stabilisation detection by checking for population periodicity:
  */
@@ -33,10 +42,8 @@ int naivestab_awesome(UPATTERN &pat) {
 
         #ifdef MAXPOP
         if (pat.totalPopulation() > MAXPOP) {
-            std::cout << "Failed to detect periodic behavior (soup might be explosive) (naivestab, population)!" << std::endl;
             return 222222;
         } else if (steps > MAXGEN) {
-            std::cout << "Failed to detect periodic behavior (soup might be explosive) (naivestab, long-lasting)!" << std::endl;
             return 222222;
         }
         #endif
@@ -88,10 +95,8 @@ int stabilise3(UPATTERN &pat) {
 
         #ifdef MAXPOP
         if (pat.totalPopulation() > MAXPOP) {
-            std::cout << "Failed to detect periodic behavior (soup might be explosive) (stabilize3, population)!" << std::endl;
             return 222222;
         } else if (generation > MAXGEN) {
-            std::cout << "Failed to detect periodic behavior (soup might be explosive) (stabilize3, long-lasting)!" << std::endl;
             return 222222;
         }
         #endif

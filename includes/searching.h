@@ -168,6 +168,22 @@ void perpetualSearch(uint64_t soupsPerHaul, int numThreads, bool interactive, co
 
     std::cout << "Running " << soupsPerHaul << " soups per haul:" << std::endl;
 
+    #ifdef MAXPOP
+    aperiodicSoups = 0;
+    #endif
+
+    // Progress line: "<rule>/<sym>: N soups completed (..., ... overall)[, M aperiodic]."
+    auto progressMessage = [&](uint64_t done, double secondsSinceLastMessage, double secondsSinceStart) {
+        std::cout << RULESTRING << "/" << SYMMETRY2 << ": " << done << " soups completed ("
+                  << std::fixed << std::setprecision(3) << (((double) done - (double) soupsCompletedBeforeLastMessage) / secondsSinceLastMessage) << " soups/second current, "
+                  << (done / secondsSinceStart) << " overall)"
+                  #ifdef MAXPOP
+                  << ", " << aperiodicSoups << " aperiodic"
+                  #endif
+                  << "." << std::endl;
+        soupsCompletedBeforeLastMessage = done;
+    };
+
     #ifdef USING_GPU
     uint64_t epoch_size = 1000000;
     apg::GpuSearcher gs(0, unicount, SYMMETRY);
@@ -227,6 +243,19 @@ void perpetualSearch(uint64_t soupsPerHaul, int numThreads, bool interactive, co
                 }
             } while ((newi < maxcount) && (vec.size() < 5000) && (running) && (ts < nvec.size()));
 
+            // Report progress every 2 seconds while the batch runs, not only
+            // between batches (a batch can take much longer than that).
+            while (running && (ts < nvec.size())) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                auto now = std::chrono::system_clock::now();
+                double sinceMessage = 0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(now - timeOfLastMessage).count();
+                if (sinceMessage >= 2.0) {
+                    double sinceStart = 0.001 * std::chrono::duration_cast<std::chrono::milliseconds>(now - timeOfStart).count();
+                    progressMessage(soupsCompletedSinceStart + ts, sinceMessage, sinceStart);
+                    timeOfLastMessage = now;
+                }
+            }
+
             for (int j = 0; j < numThreads; j++) {
                 lsthreads[j].join();
                 globalSoup.aggregate(&(localSoups[j].census), &(localSoups[j].alloccur));
@@ -251,12 +280,8 @@ void perpetualSearch(uint64_t soupsPerHaul, int numThreads, bool interactive, co
         bool finished = (!running) || ((soupsCompletedSinceStart == maxcount) && vec.empty());
         uint64_t soupsCompletedSinceLastMessage = soupsCompletedSinceStart - soupsCompletedBeforeLastMessage;
 
-        if (finished || (secondsSinceLastMessage >= 10.0) || ((secondsSinceLastTimerCheck >= 1.0) && (soupsCompletedSinceLastMessage == 1)) || (soupsCompletedSinceLastMessage >= 1000000)) {
-            std::cout << RULESTRING << "/" << SYMMETRY2 << ": " << soupsCompletedSinceStart << " soups completed ("
-                      << std::fixed << std::setprecision(3) << (soupsCompletedSinceLastMessage / secondsSinceLastMessage) << " soups/second current, "
-                      << (soupsCompletedSinceStart / secondsSinceStart) << " overall)." << std::endl;
-
-            soupsCompletedBeforeLastMessage = soupsCompletedSinceStart;
+        if (finished || (secondsSinceLastMessage >= 2.0) || ((secondsSinceLastTimerCheck >= 1.0) && (soupsCompletedSinceLastMessage == 1)) || (soupsCompletedSinceLastMessage >= 200000)) {
+            progressMessage(soupsCompletedSinceStart, secondsSinceLastMessage, secondsSinceStart);
             timeOfLastMessage = now;
 
             #ifndef _WIN32
@@ -269,7 +294,11 @@ void perpetualSearch(uint64_t soupsPerHaul, int numThreads, bool interactive, co
 
         if (finished) {
             std::cout << "----------------------------------------------------------------------" << std::endl;
-            std::cout << soupsCompletedSinceStart << " soups completed." << std::endl;
+            std::cout << soupsCompletedSinceStart << " soups completed"
+                      #ifdef MAXPOP
+                      << " (" << aperiodicSoups << " aperiodic, skipped)"
+                      #endif
+                      << "." << std::endl;
             std::cout << globalSoup.tilesProcessed << " tiles processed." << std::endl;
             std::cout << "Attempting to contact Catagolue..." << std::endl;
             std::string payoshaResponse = globalSoup.submitResults(payoshaKey, seed, soupsCompletedSinceStart, local_log, testing);

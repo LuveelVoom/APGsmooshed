@@ -121,6 +121,9 @@ Searching: `./apgluxe [options]` or `./apgluxe-autorestart.sh [options]`
 
 Running `./apgluxe` with no options asks for soups per haul and a key.
 
+Progress lines appear every 2 seconds (upstream: every 10 seconds, and only
+between batches of soups, which for slow rules was much less often).
+
 
 Auto-restart: `./apgluxe-autorestart.sh [apgluxe options]`
 ----------------------------------------------------------
@@ -143,8 +146,12 @@ or `--symmetry C1_spaceinvaders`, which uses those default limits. Giving only
 one of `--maxpop` / `--maxgen` uses the default for the other.
 
 A soup that exceeds the population limit, or runs past the generation limit, is
-skipped with "Failed to detect periodic behavior (soup might be explosive)". It
-counts as searched, but none of its objects are recorded. Hauls upload as
+skipped: it counts as searched, but none of its objects are recorded. Skipped
+soups are counted per haul and shown in the progress lines and the haul summary:
+
+    b2s/C1_spaceinvaders: 20000 soups completed (40567.951 soups/second current, 40567.951 overall), 20000 aperiodic.
+    20000 soups completed (20000 aperiodic, skipped).
+ Hauls upload as
 `<symmetry>_spaceinvaders` (e.g. `C1_spaceinvaders`), separately from normal
 hauls. Different limits upload under the same name, so keep them consistent.
 The generation limit applies separately to each of the two stabilisation phases
