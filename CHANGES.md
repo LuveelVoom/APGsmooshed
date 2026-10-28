@@ -130,6 +130,9 @@ Kept as in the fork, but worth knowing:
   while a batch of soups is running (upstream printed only between batches; a
   100000-soup batch takes about 10 s on b3-qr4k5cek6cs23-a4er56aek). The
   soup-count trigger is 200000 instead of 1000000.
+- Version string `v5.43-ll2.5.9-smooshed` (`APG_VERSION` in `includes/base.h`):
+  upstream's string with a suffix, shown at startup and sent as `@VERSION` with
+  each haul.
 - `apgluxe-autorestart.sh`: restarts apgluxe after crash signals; logs them;
   gives up after 5 fast crashes in a row.
 - tests/: `kat.sh` (census known answers, per C++ standard library), `unit.sh`

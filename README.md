@@ -191,7 +191,8 @@ Known issues
   fix would change results everywhere.
 - apgluxe occasionally segfaulted (seen once in about 5 hours with the original
   x86 build under Rosetta); the cause wasn't found. Use the restart wrapper.
-- The uploaded version string is upstream's (`v5.43-ll2.5.9`).
+- Hauls are uploaded with version `v5.43-ll2.5.9-smooshed` (upstream's string
+  plus a suffix, set in `includes/base.h`), so Catagolue can tell them apart.
 
 
 Credits and licences
