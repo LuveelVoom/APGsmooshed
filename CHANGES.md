@@ -77,6 +77,68 @@ Measured, back to back: first version (128-byte key) +14..+26% over arm64 +
 PGO; 18x18 key a further +27..34% (qr4k), +22..35% (b2-as12), +38% (b2e) with
 PGO.
 
+Key without the transpose: the key used to be built by transposing the whole
+32x32 input to rows (`z64_to_r32_sse2`) and cutting out 18x18. It is now read
+straight from the Z-ordered input words. Each word is an 8x8 tile (byte = row,
+bit = column), so the window is 4 whole tiles (words 3, 6, 9, 12), 8 one-row or
+one-column slivers and 4 corner bits, packed by AND/shift/OR into the same 6
+words. The transpose now runs only on a miss (inside the kernel). Exact: by unit
+vectors, the 324 window bits map to 324 distinct key bits and the other 700 to
+none; the map is linear; 0 disagreements between "keys equal" and "windows
+equal" in 2M perturbation trials; memo vs uncached kernel 0 mismatches in 4M
+calls (asm and portable builds). `tests/memo.cpp` (run by `unit.sh`) repeats
+the last check with inputs that hit the memo; it fails (65 mismatches) if one
+corner bit is dropped from the key. Census identical (kat, 1 and 2 threads) on
+the three non-totalistic rules.
+
+Measured on Linux x86-64 (Xeon @ 2.8 GHz, AVX-512, 2 cores, GCC 13.3, -p 2, no
+PGO, 3 alternating runs each, soups/s): qr4k D8_1 736-770 -> 960-998 (+28%),
+b2-as12 1114-1171 -> 1416-1436 (+21..29%), b2e 292-304 -> 372-382 (+22..31%).
+ARM: see section 7.
+
+
+Two-generation steps (isotropic genus): isotropic rules had valid mantissa
+{0, 1}, so the tile scheduler advanced one generation per step. Every tile with
+p2 debris was re-run every generation (the source of the 95% memo hit rate),
+and each step paid the scheduler's per-tile cost. Totalistic rules step 2
+generations, so p2 tiles go idle. Now `genera/isotropic.py` has mantissa
+{0, 1, 2}, `autocompile.py` dispatches n == 2 to `iterate_var_leaf2` for
+family-4 rules whose mantissa contains 2 (LtL, also family 4, is unchanged), and
+`isoluts.h` has:
+- `iterate_var_leaf_rows`: the old kernel body, taking rows instead of Z-order
+  (`iterate_var_leaf_compute` = transpose + this).
+- `iterate_var_leaf2_compute`: generation 1 on rows/columns 7..24 from two
+  kernel calls on diagonally shifted rows (covering 7..22 and 9..24) plus the 8
+  cells they miss from `xfl9` (the lookup the kernel's tables are built from),
+  then generation 2 with one more kernel call.
+- `iterate_var_leaf2`: memo as above, keyed on the 20x20 window (400 bits, 7
+  words; same unit-vector check: 400 distinct bits, 0 from outside, 0
+  disagreements in 2M trials).
+
+`upattern::advance` keeps one-generation steps when `history != 0` on 16-wide
+tiles: the leaf iterator ORs only a step's last generation into the history
+layer, so a 2-generation step would drop odd generations from the envelope
+`separate()` uses. Switching from 2 back to 1 already makes upattern decache
+every tile (upstream logic, also used by the totalistic path).
+
+Checked: the scalar `lut9` reference matches the 1-generation kernel on 25.6M
+cells for qr4k and on 4 random 512-bit tables (so it doesn't rely on isotropy);
+2-generation leaf (memo and uncached) vs two reference generations: 0
+mismatches in 102M cells (qr4k) and 0 on the 4 random tables, asm and portable
+builds; `tests/memo.cpp` checks this and fails (108778 mismatches) if one of the
+8 scalar cells is dropped. Census identical (kat, 1 and 2 threads) on the three
+non-totalistic rules. Hexagonal rules use the same genus and get the change too;
+not tested end to end.
+
+Measured (same Xeon, -p 2, no PGO, 3 alternating runs, soups/s, against the
+transpose-free key above): qr4k D8_1 969-979 -> 1286-1326 (+32..37%), b2-as12
+1413-1468 -> 1847-1899 (+26..34%), b2e 379-390 -> 530-566 (+36..49%). Against
+the build before both changes: qr4k +67..80%, b2-as12 +58..70%, b2e +74..94%.
+Under callgrind (qr4k, 1500 soups) instructions fell from 22.6G to 14.9G with
+the first version (4 kernel calls per miss); leaf steps 50.6M -> 17.5M two-gen
+(92% memo hits) + 1.4M one-gen. A first version computing generation 1 with 4
+shifted kernel calls was 4..11% slower than the final one.
+ARM and --profile: see section 7.
 
 3. Object separation builds patterns in one go (all rules, any architecture)
 ---------------------------------------------------------------------------
@@ -141,6 +203,62 @@ Kept as in the fork, but worth knowing:
 - Removed: `.gitlab-ci.yml` files (upstream CI), `.gitmodules`.
 
 
+6. Incremental totalHash (rules on UTile: isotropic and other non-Life genera)
+------------------------------------------------------------------------------
+
+Phase II of `stabilise3` calls `upattern::totalHash(120)` every 30 generations;
+it summed a term for every tile ever allocated. For tile types with a cached
+hash (`UTile`; detected by a `hashContrib` field, so `VTile`/Life keep the old
+sweep) the sum is now kept (mod 2^64, so the value is identical) and on each
+call only these tiles are recomputed: those whose cached hash went stale
+(`updateTile` pushes a tile on `hashstale` when it clears `hashCurrent`) and
+those allocated since the last call (tile indices only grow). Every other tile
+would contribute its unchanged cached hash, so its stored term is still right;
+this includes upstream's `eu64`, which changes cells without clearing
+`hashCurrent`. Only tiles inside the radius get `hashTile` called, as before.
+
+Checked: a build comparing every incremental result with the full sweep: 0
+differences over the kat hauls of all three non-totalistic rules; it aborts if
+stale tiles aren't pushed. New tiles are always still empty when first counted in
+real soups (140k checked), so `tests/hashtest.cpp` (run by `kat.sh`) inserts
+cells into fresh tiles between calls: 0 differences in 18000 calls, 11666
+if new tiles are skipped. Census identical (kat) on the three rules.
+
+Measured (Xeon, -p 2, 3 alternating runs, soups/s): b2e 555-566 -> 673-697
+(+19..26%); qr4k and b2-as12 within noise (qr4k 1240-1329 vs 1192-1313,
+b2-as12 +0..6%). Combined with section 2, b2e is 292-304 -> 673-697 soups/s
+(+121..139%) over the version before these changes.
+
+
+7. ARM measurements of sections 2 (memo key, two-generation steps) and 6
+------------------------------------------------------------------------
+
+Apple M4 Pro, Apple clang, -p 10, soups/s from wall time of a fixed-seed
+no-upload haul (100k soups; b2e 40k), 3 runs alternating old/new, old = commit
+8a290e2. These runs are short, so the noise is large (single runs up to -40%).
+Census identical (kat, 1 thread) for all three rules with and without
+--profile; unit.sh passes natively and under Rosetta (asm), including the
+memo test; kat also passes for b3s23 and b3678s34678 (x86 builds, which don't
+use any of this code).
+
+| rule | old | new | old --profile | new --profile |
+|---|---|---|---|---|
+| qr4k D8_1 | 6389, 7271, 8922 | 14054, 16741, 15705 | 11382, 13971, 12264 | 17396, 16851, 20060 |
+| b2-as12 | 15339, 16098, 16025 | 24116, 24217, 24719 | 21146, 13401, 21882 | 29408, 30890, 30292 |
+| b2e | 3360, 3335, 3344 | 7086, 7098, 7128 | 4420, 4333, 3528 | 8845, 8554, 9274 |
+
+Pairwise, without --profile: qr4k +75..130% (noisiest), b2-as12 +50..58%,
+b2e +111..114%. With --profile on both sides: qr4k +21..64%, b2-as12 +38..39%
+(one old run at 13401 left out), b2e +97..163%.
+The earlier two-generation attempt (see "Tried and rejected") lost its gain
+under --profile; this version keeps it.
+
+Profile of the new build (`sample`, qr4k, -p 1): the leaf kernel on memo misses
+(`iterate_var_leaf_rows`) is now the largest single function, then the tile
+scheduler (`upattern::advance` with `updateTile` inlined), the memo hit path
+and `universal_leaf_iterator`. On b2e the scheduler dominates.
+
+
 Found in upstream, not changed
 ------------------------------
 
@@ -172,6 +290,21 @@ Tried and rejected (soups/s, back to back unless noted, census identical)
 - `--profile` for b3s23 (x86): -8%.
 - Memo with 2^12 entries (smaller gains); inline 16-word compare instead of
   memcmp (-1..-6%).
+- Four-generation steps for isotropic rules (mantissa {0,1,2,4},
+  `iterate_var_leaf4` from four shifted two-generation blocks, 24x24-keyed memo;
+  the leaf itself was exact against a scalar reference): much slower (kat time
+  qr4k 35 s vs 22 s, b2e 111 s vs 21 s) and **census-changing** on b2e (a few p4
+  objects). Cause: `naivestab_awesome` returns period 2 when `pat.modified` is
+  empty, which assumes steps of at most 2 generations; with 4-generation steps
+  p4 soups go idle and get that period. Any step size above 2 needs that check
+  changed.
+- 2^16 entries for the two-generation memo: qr4k +0.6..3.5%, b2e -1..+3%, for
+  4x the memory per thread.
+- A second 1-generation memo (row-keyed) for the kernel calls on the
+  two-generation miss path: qr4k -8..-15%, b2e -3..-10%.
+- Memo with 2^16 entries on x86 (Xeon, 2 MiB L2 per core, transpose-free key):
+  954-998 vs 972-1024 soups/s for 2^14, i.e. noise. qr4k D8_1 already hits 95%
+  at 2^14 (50.6M calls, 2.6M misses, 1500 soups under callgrind).
 - lifetree memo maps (`std::map`) as `std::unordered_map` -10/-6/+1%, or as a
   flat table with inline slots +1/-1/-5%.
 - Caching classification of multi-tile clusters: repeats were 60% of calls but
@@ -179,6 +312,16 @@ Tried and rejected (soups/s, back to back unless noted, census identical)
 - Two-generation tile steps for isotropic rules: exact (casim and census
   checks), +12..+40% without PGO but -12..+16% with PGO on both sides, and the
   extra code slowed 1-generation builds by 4-10%. Not included.
+  (Later included in a different form, see section 2: on Linux x86 without
+  PGO it gave +26..49% over the 1-generation build. The PGO result above was
+  on the M4 with the earlier version. The new version keeps its gain with
+  --profile on the M4, see section 7.)
+- Two-generation memo entries padded to 128 bytes and 128-byte aligned (the
+  M4's cache line; 88-byte entries straddle two lines most of the time): no
+  gain on the M4 (no PGO, -p 10, soups/s: qr4k 14282/11486/16487 ->
+  13915/11872/13266, b2-as12 24156/24007/23851 -> 13986/23876/23439, b2e
+  6666/6928/7021 -> 4574/6895/4720; the low values are outliers but there's
+  no gain either way).
 - mimalloc: not tested (it would have to be built from downloaded source).
 - Thread count: on the M4 Pro, -p 12..16 is about 6% above -p 10, and no
   further.

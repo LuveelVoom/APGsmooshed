@@ -372,6 +372,11 @@ def write_all_iterators(f, hist, rules, families):
         elif ((family == 4) and (hist == 0)):
             not_used = False
             f.write('            case %d :\n' % i)
+            m = genera.rule_property(runsafe, 'mantissa')
+            if hasattr(m, '__iter__') and (2 in m):
+                # Two-generation leaf (APGsmooshed; see CHANGES.md)
+                nnot_used = False
+                f.write('                if (n == 2) { return %s::iterate_var_leaf2(inleaves, outleaf); }\n' % r)
             f.write('                return %s::iterate_var_leaf(inleaves, outleaf);\n' % r)
     f.write('        }\n')
     if not_used:

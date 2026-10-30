@@ -33,6 +33,11 @@ fi
 n=${ref##*_}; n=${n%.txt}
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# Incremental totalHash vs full sweep (needs the rule's generated headers).
+if [ -n "$(grep '#define UPATTERN apg::upattern<apg::UTile' "$params")" ]; then
+    (cd "$here/.." && ${CXX:-g++} -std=c++11 -O2 -march=native -w -pthread -I . tests/hashtest.cpp includes/md5.cpp includes/happyhttp.cpp -o "$tmp/hashtest") &&
+        "$tmp/hashtest" | sed 's/^/kat: /' || { echo "kat: FAIL hashtest"; exit 1; }
+fi
 cp "$apg" "$tmp/"; cd "$tmp"
 start=$(date +%s)
 ./apgluxe -t 1 -v 0 -L 1 -s benchseed -n "$n" -p "${1:-10}" > run.out 2>&1

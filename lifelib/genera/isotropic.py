@@ -1,6 +1,6 @@
 family = 4
 bitplanes = 1
-mantissa = {0, 1}
+mantissa = {0, 1, 2}  # 2: iterate_var_leaf2 (APGsmooshed; see CHANGES.md)
 
 from .exceptions import NonCanonicalError
 

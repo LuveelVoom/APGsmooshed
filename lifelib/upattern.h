@@ -26,6 +26,13 @@ namespace apg {
                                     0xffffffff00000000ull};
 
 
+    // Tile types with a cached per-tile hash (hashTile/hashCurrent) and a
+    // hashContrib field get an incremental totalHash. (APGsmooshed; see CHANGES.md)
+    template<typename T, typename = void>
+    struct has_hash_contrib : std::false_type {};
+    template<typename T>
+    struct has_hash_contrib<T, decltype((void) &T::hashContrib, void())> : std::true_type {};
+
     // Tile typename, width and height:
     template<typename T, int W, int H = W>
     class upattern {
@@ -47,7 +54,14 @@ namespace apg {
         uint64_t torus_height;
         uint64_t lastmant;
 
+        // Incremental totalHash state (APGsmooshed; see CHANGES.md):
+        bool hsumValid = false;
+        int hsumRadius = 0;
+        uint64_t hsum = 0;
+        uint32_t hsumNodes = 0;
+
         public:
+        std::vector<T*> hashstale; // tiles whose cached hash went stale
         indirected_map<uint64_t, T> tiles;
         std::vector<T*> modified;
         std::vector<T*> temp_modified;
@@ -232,6 +246,10 @@ namespace apg {
             uint64_t grem = generations;
             int family = uli_get_family(rule) + history;
             uint64_t vmb = valid_mantissa(rule);
+            // The leaf iterator ORs only the final generation of a step into
+            // the history layer, so steps with history are one generation.
+            // (APGsmooshed; see CHANGES.md)
+            if ((W == 16) && history) { vmb &= 3; }
             while (grem > 0) {
                 uint64_t m = (grem >= 8) ? 8 : grem;
                 while (((vmb >> m) & 1) == 0) { m -= 1; }
@@ -314,6 +332,57 @@ namespace apg {
         }
 
         uint64_t totalHash(int radius) {
+            return totalHash(radius, has_hash_contrib<T>());
+        }
+
+        /*
+        * Same value as the full sweep below, kept up to date: the sum is mod
+        * 2^64, and a tile's term only changes when hashTile would recompute
+        * (hashCurrent false: updateTile pushes such tiles on hashstale) or
+        * when the tile is new (indices only grow, so new tiles are
+        * [hsumNodes, size)). Every other tile keeps the term it had, which is
+        * what the sweep would use too (its cached hash). (APGsmooshed; see
+        * CHANGES.md)
+        */
+        uint64_t totalHash(int radius, std::true_type) {
+            uint32_t totalnodes = tiles.size();
+            if ((!hsumValid) || (radius != hsumRadius)) {
+                hsum = 0;
+                for (uint32_t it = 0; it != totalnodes; ++it) {
+                    T* sqt = &(tiles.elements[it]);
+                    sqt->hashContrib = hashTerm(sqt, radius);
+                    hsum += sqt->hashContrib;
+                }
+                hsumValid = true; hsumRadius = radius;
+            } else {
+                for (auto it = hashstale.begin(); it != hashstale.end(); ++it) {
+                    if (!((*it)->hashCurrent)) { rehashTerm(*it, radius); }
+                }
+                for (uint32_t it = hsumNodes; it != totalnodes; ++it) {
+                    rehashTerm(&(tiles.elements[it]), radius);
+                }
+            }
+            hashstale.clear();
+            hsumNodes = totalnodes;
+            return hsum;
+        }
+
+        uint64_t hashTerm(T* sqt, int radius) {
+            int64_t tx = (sqt->coords & 0xffffffffu) - 0x80000000u;
+            int64_t tw = (sqt->coords >> 32) - 0x80000000u;
+            if (tx * tx + tw * tw - tx * tw < radius * radius) {
+                return sqt->hashTile() * (sqt->coords ^ 3141592653589793ull);
+            }
+            return 0;
+        }
+
+        void rehashTerm(T* sqt, int radius) {
+            uint64_t c = hashTerm(sqt, radius);
+            hsum += c - sqt->hashContrib;
+            sqt->hashContrib = c;
+        }
+
+        uint64_t totalHash(int radius, std::false_type) {
 
             uint64_t globalhash = 0;
 

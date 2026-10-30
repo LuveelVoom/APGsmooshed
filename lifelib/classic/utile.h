@@ -26,7 +26,11 @@
         bool populationOld; // 1 byte
         bool hashCurrent; // 1 byte
 
-        // sizeof(UTile<N, M>) == 128N + 72 bytes (no alignment space wasted)
+        // This tile's term in upattern's incremental totalHash.
+        // (APGsmooshed; see CHANGES.md)
+        uint64_t hashContrib; // 8 bytes
+
+        // sizeof(UTile<N, M>) == 128N + 80 bytes (no alignment space wasted)
 
         void clearHistory() {
             std::memset(a + (4 * M), 0, 32 * (N - M));
@@ -106,6 +110,7 @@
                 if (diff[0] | diff[1] | diff[2] | diff[3]) {
                     if (!populationOld) { owner->popchanged.push_back(this); }
                     populationOld = true;
+                    if (hashCurrent) { owner->hashstale.push_back(this); } // (APGsmooshed)
                     hashCurrent = false;
                     if (updateflags == 0) { owner->modified.push_back(this); }
                     updateflags |= 64;

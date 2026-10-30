@@ -20,6 +20,12 @@ run() {  # name, arch prefix, flags[, compiler]
     else
         echo "unit: could not build/run $1"; fail=1
     fi
+    # Leaf memo vs uncached kernel, with inputs that hit the memo.
+    if $2 "${4:-$cxx}" -std=c++11 -O2 $3 -w -I "$tmp" "$here/memo.cpp" -o "$tmp/$1-memo" && $2 "$tmp/$1-memo" > "$tmp/$1-memo.txt"; then
+        echo "unit: PASS $1 memo"
+    else
+        echo "unit: FAIL $1 memo ($(cat "$tmp/$1-memo.txt" 2>/dev/null) mismatches)"; fail=1
+    fi
 }
 case "$(uname -m)" in
 x86_64|amd64)

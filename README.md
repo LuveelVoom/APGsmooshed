@@ -6,8 +6,9 @@ lifelib bundled and a set of changes on top of upstream
 [apgmera](https://gitlab.com/apgoucher/apgmera):
 
 - **Faster**, with identical results: a memo in front of the isotropic
-  non-totalistic rule kernel and a cheaper object-separation step in the
-  classifier. Both are plain C++ and help on any computer.
+  non-totalistic rule kernel, two-generation steps for those rules, an
+  incremental hash in stabilisation detection, and a cheaper object-separation
+  step in the classifier. All are plain C++ and help on any computer.
 - **Native on ARM** (Apple silicon, 64-bit ARM Linux) for isotropic
   non-totalistic rules. Upstream lifelib only builds for x86.
 - **Spaceinvaders**: optional skipping of explosive soups (from
@@ -31,8 +32,14 @@ under Rosetta):
 
 The x86 code path alone (built for x86_64, measured under Rosetta, no
 `--profile`) is 1.6-1.7x, 1.7-1.8x and 1.4-1.5x on the three non-totalistic
-rules above, with identical census. Real x86 hardware wasn't available for
-testing.
+rules above, with identical census. On a Linux x86-64 Xeon (GCC 13.3, -p 2,
+no `--profile`), a cheaper memo key and two-generation steps (CHANGES.md
+section 2) together gave +67..80%, +58..70% and +74..94% on those rules over
+the previous version, and an incremental stabilisation hash (section 6) brought
+b2e to +121..139%. On the M4 Pro (arm64, -p 10) the same changes gave
+about +50..130% without `--profile`, and with it +20..65% (qr4k), +38%
+(b2-as12) and +97..163% (b2e), census identical (CHANGES.md section 7); the
+table above predates them.
 
 
 Requirements and platforms
@@ -44,7 +51,7 @@ You need a C++11 compiler (clang or GCC), `make`, `python3` and `bash`.
 |---|---|
 | macOS, Apple silicon | **tested** (Apple clang 16, GCC 16). Isotropic non-totalistic rules native; other rule families built for x86 and run under Rosetta |
 | macOS, Intel | x86 build, which is what upstream does; the x86 code path was tested under Rosetta |
-| Linux x86-64 | expected to work like upstream; **untested** |
+| Linux x86-64 | **tested** (GCC 13.3, AVX-512 Xeon): kat and unit pass for the three non-totalistic rules; totalistic rules not tried (kat has no libstdc++ references for them) |
 | Linux 64-bit ARM | isotropic non-totalistic rules only (other families need x86); **untested** |
 | Windows | upstream's Cygwin / MSYS2 / WSL routes (see README.upstream.md); **untested** |
 | NVIDIA GPU (`--cuda`) | upstream code, unchanged; **untested** |
@@ -165,8 +172,8 @@ common in rules with replicators, e.g. B36/S23 with D8_1.
 Tests
 -----
 
-    tests/kat.sh [threads]   # census of a fixed no-upload haul vs stored results
-    tests/unit.sh            # SIMD routines and rule kernel vs stored hashes
+    tests/kat.sh [threads]   # census of a fixed no-upload haul vs stored results; incremental hash test
+    tests/unit.sh            # SIMD routines and rule kernel vs stored hashes; leaf memo vs uncached kernel
 
 `kat.sh` has references for `b3s23`/C1, `b3678s34678`/C1, `b2-as12`/C1,
 `b2e3aeinr4ce5c6n7c8s1c2-i3-a4acen5cen6c78`/C1 and
