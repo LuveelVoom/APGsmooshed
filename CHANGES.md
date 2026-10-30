@@ -153,6 +153,16 @@ loop.
 Measured: arm64 qr4k +26%, b2-as12 +20%, b2e +1%; x86 b3678s34678 2.2-3x;
 b3s23 unchanged.
 
+**Optional since 2026-10-29:** on by default (makefile adds
+`-DAPG_FAST_SEPARATION`); `./recompile.sh --no-fast-separation` builds
+upstream's per-cell loop instead. Census identical either way (kat, off with 1
+thread, on with 2 threads, all three non-totalistic rules). Cost of turning it
+off, measured on the M4 Pro (-p 10, no PGO, 3 runs, soups/s, builds that also
+had the experimental 4-generation steps): qr4k 13153-14494 vs 19152-22095,
+b2-as12 18455-19235 vs 28625-29650, b2e 6304-6360 vs 7802-7909. apgluxe's
+automatic rebuild runs `recompile.sh` without the option, so it gets the
+default.
+
 
 4. Spaceinvaders
 ----------------
@@ -198,7 +208,8 @@ Kept as in the fork, but worth knowing:
 - `apgluxe-autorestart.sh`: restarts apgluxe after crash signals; logs them;
   gives up after 5 fast crashes in a row.
 - tests/: `kat.sh` (census known answers, per C++ standard library), `unit.sh`
-  (routine hashes), `t.cpp` and the generated headers it needs. Upstream's
+  (routine hashes), `t.cpp` and the generated headers it needs.
+  `unit.sh` also builds the opt-in QuickLife kernel (section 8). Upstream's
   `test/minstrels.rle` moved here.
 - Removed: `.gitlab-ci.yml` files (upstream CI), `.gitmodules`.
 
@@ -259,6 +270,59 @@ scheduler (`upattern::advance` with `updateTile` inlined), the memo hit path
 and `universal_leaf_iterator`. On b2e the scheduler dominates.
 
 
+8. NEON leaf kernel (isotropic non-totalistic rules, ARM)
+---------------------------------------------------------
+
+On ARM, `iterate_var_leaf_compute` and `iterate_var_leaf2_compute`
+(`lifelib/avxlife/isoluts.h`, the memo-miss paths) are a NEON kernel instead of
+the x86 code transcribed through sse2neon. One cell per byte; `lut9` (the
+rule's 512-bit table, 64 bytes) sits in four registers, and `tbl` looks up 16
+cells at once: the 6 bits of the rows at and below a cell pick a lut9 byte, the
+3 bits of the row above pick the bit (the same split as `xfl9`). No memory
+tables, so `lut24` (16 MiB) and `mix18` (1 MiB) are no longer touched on ARM.
+The input is expanded straight from the Z-ordered words with `tbl`/`tst`, and
+the output is packed with a `vpaddq` tree that yields the Z-order words
+directly. The two-generation leaf computes generation 1 on the full 18x18
+(16-lane plus 8-lane block) instead of two overlapping 16x16 kernel calls and
+8 scalar cells. x86 keeps the original asm. `-DLIFELIB_NO_NEON_ISO` turns the
+NEON kernel off.
+
+Also added, opt-in with `-DLIFELIB_ISO_QL`: a QuickLife-style kernel (64 KiB
+table from a 4x4 block to its central 2x2, built from lut9; plain C++, any
+architecture), in response to a suggestion to use QuickLife tables. It is
+slower than the NEON kernel on ARM and isn't the default anywhere.
+
+Checked: unit.sh passes with both kernels (routine hashes equal to the original
+x86 asm on 200000 random inputs; memo test, which includes the two-generation
+leaf against a scalar lut9 reference); microbenchmark on 3.8M real memo-miss
+inputs recorded from qr4k and b2e soups: 0 mismatches against the scalar
+reference for every variant; census identical (kat) on all three
+non-totalistic rules, with and without --profile, and with and without
+`--no-fast-separation`; b3s23 (x86) kat passes.
+
+Measured, microbenchmark (M4 Pro, ns per call on recorded miss inputs, 1
+thread, qr4k; b2e similar): two-generation 113 -> 45 (old: 3 kernel calls +
+scalar cells; QuickLife table on the same direct 18x18 structure 77; the
+same structure with a 16 MiB 4x6->2x4 table 61); one-generation 29.5 -> 18.5
+(QuickLife 35). Most of the old cost was the 3-call structure, not the table.
+
+End to end (M4 Pro, -p 10, 3 alternating runs, soups/s, 150k soups; b2e 40k),
+against HEAD 3d48f0b:
+
+| | base | NEON | QuickLife (opt-in) |
+|---|---|---|---|
+| qr4k D8_1, no PGO | 12823-16801 | 17995-20689 | 17277-19118 |
+| b2-as12, no PGO | 25206-26135 | 26810-27377 | 25641-26400 |
+| b2e, no PGO | 6902-7109 | 7399-7503 | 7153-7234 |
+| qr4k D8_1, --profile | 18344-20436 | 21885-25257 | |
+| b2-as12, --profile | 32152-32874 | 32610-32997 | |
+| b2e, --profile | 8640-9141 | 8948-9305 | |
+
+So with --profile: qr4k +19..24%, b2-as12 and b2e within noise (0..+4%).
+Before this change the kernel was 26% of busy samples on qr4k and 7% on b2e
+(`sample`, -p 1), which bounds what a kernel change can give.
+
+
 Found in upstream, not changed
 ------------------------------
 
@@ -298,6 +362,19 @@ Tried and rejected (soups/s, back to back unless noted, census identical)
   empty, which assumes steps of at most 2 generations; with 4-generation steps
   p4 soups go idle and get that period. Any step size above 2 needs that check
   changed.
+  Tried again 2026-10-29 on top of the NEON kernel (section 8): leaf4 computed
+  directly (generations on 22, 20, 18, 16 columns), 9-word key for the 24x24
+  window (unit-vector check: 576 distinct bits, 0 from outside; leaf vs 4
+  scalar generations: 0 mismatches in 300k inputs), `naivestab_awesome`
+  returning 4 instead of 2. Census identical, but b2e kat took 92 s instead of
+  16 s: phase II advances 30 generations (7 x 4 + 2), and every switch from 4-
+  to 2-generation steps decaches all tiles (`runkgens`), so large patterns were
+  recomputed in full every 30 generations. Using 4-generation steps only when a
+  whole `advance` call is a multiple of 4 fixed that. Then (-p 10, soups/s):
+  without PGO +5..10% over NEON alone (qr4k 19104-21638, b2-as12 28316-29981,
+  b2e 7654-7858), but with --profile no gain or a loss (qr4k 21023-24380 vs
+  21885-25257, b2-as12 32218-33366 vs 32610-32997, b2e 8405-8679 vs
+  8948-9305). Not included.
 - 2^16 entries for the two-generation memo: qr4k +0.6..3.5%, b2e -1..+3%, for
   4x the memory per thread.
 - A second 1-generation memo (row-keyed) for the kernel calls on the

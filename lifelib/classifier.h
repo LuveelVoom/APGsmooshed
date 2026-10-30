@@ -63,10 +63,13 @@ namespace apg {
                 }
             }
 
-            // Populate patterns. For one-plane rules, collect each island's
-            // cells in a bitworld and build the pattern once, instead of one
-            // hashlife subrect + union per cell (identical result, far cheaper).
+            // Populate patterns. With APG_FAST_SEPARATION (the default; off
+            // with recompile.sh --no-fast-separation), one-plane rules collect
+            // each island's cells in a bitworld and build the pattern once,
+            // instead of one hashlife subrect + union per cell (identical
+            // result, far cheaper).
             // (APGsmooshed; see CHANGES.md)
+            #ifdef APG_FAST_SEPARATION
             if (M == 1) {
                 std::vector<std::vector<std::vector<bitworld>>> bws(islcount,
                     std::vector<std::vector<bitworld>>(phases.size(), std::vector<bitworld>(1)));
@@ -80,7 +83,9 @@ namespace apg {
                         if (!bws[c][t][0].world.empty()) { subpats[c][t] = apg::pattern(lab, bws[c][t], rule); }
                     }
                 }
-            } else {
+            } else
+            #endif
+            {
                 for (auto it = umap.begin(); it != umap.end(); ++it) {
                     uint64_t cid = uf.find(it->second);
                     uint64_t c = cmap[cid];

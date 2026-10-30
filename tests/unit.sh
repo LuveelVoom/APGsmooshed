@@ -30,9 +30,11 @@ run() {  # name, arch prefix, flags[, compiler]
 case "$(uname -m)" in
 x86_64|amd64)
     run native "" "-march=native"
-    run portable "" "-march=native -DLIFELIB_PORTABLE" ;;
+    run portable "" "-march=native -DLIFELIB_PORTABLE"
+    run quicklife "" "-march=native -DLIFELIB_ISO_QL" ;;
 *)
     run native "" ""
+    run quicklife "" "-DLIFELIB_ISO_QL"   # opt-in QuickLife-style kernel
     if [ "$(uname -s)" = "Darwin" ] && arch -x86_64 /usr/bin/true 2>/dev/null; then
         run x86-asm "arch -x86_64" "-arch x86_64 -march=native" /usr/bin/c++  # system clang targets x86
     fi ;;

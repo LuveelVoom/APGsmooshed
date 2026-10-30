@@ -8,9 +8,11 @@ lifelib bundled and a set of changes on top of upstream
 - **Faster**, with identical results: a memo in front of the isotropic
   non-totalistic rule kernel, two-generation steps for those rules, an
   incremental hash in stabilisation detection, and a cheaper object-separation
-  step in the classifier. All are plain C++ and help on any computer.
+  step in the classifier (`--no-fast-separation` turns that one off). All are
+  plain C++ and help on any computer.
 - **Native on ARM** (Apple silicon, 64-bit ARM Linux) for isotropic
-  non-totalistic rules. Upstream lifelib only builds for x86.
+  non-totalistic rules, with a NEON kernel. Upstream lifelib only builds for
+  x86.
 - **Spaceinvaders**: optional skipping of explosive soups (from
   jedlimlx/apgspaceinvaders).
 - **Tooling**: an auto-restart wrapper for occasional crashes, fixed `--profile`
@@ -39,7 +41,12 @@ the previous version, and an incremental stabilisation hash (section 6) brought
 b2e to +121..139%. On the M4 Pro (arm64, -p 10) the same changes gave
 about +50..130% without `--profile`, and with it +20..65% (qr4k), +38%
 (b2-as12) and +97..163% (b2e), census identical (CHANGES.md section 7); the
-table above predates them.
+table above predates them. The NEON kernel (section 8) adds +19..24% on qr4k
+with `--profile` and is within noise on the other two.
+
+The cheaper object separation (CHANGES.md section 3) can be turned off with
+`--no-fast-separation`; that cost 24..40% on qr4k, 33..38% on b2-as12 and
+18..20% on b2e (M4 Pro, -p 10, no `--profile`).
 
 
 Requirements and platforms
@@ -89,6 +96,7 @@ Building: `./recompile.sh [options]`
 | `--rule RULE` | rule to build for, e.g. `b3s23`, `B36/S23`, `b3-qr4k5cek6cs23-a4er56aek` (default `b3s23`) |
 | `--symmetry SYM` | `C1`, `D8_1`, `D2_+1`, ... (default `C1`). `SYM_spaceinvaders` turns on spaceinvaders (below) |
 | `--profile` | profile-guided build: a short training haul, then a rebuild using its profile. +5..+38% on isotropic non-totalistic rules; leave it off for B3/S23 (about 8% slower) |
+| `--no-fast-separation` | use upstream's object separation, which adds an island's cells to its pattern one at a time, instead of building each pattern in one go (CHANGES.md section 3). Same census, but 18..40% fewer soups/s on the isotropic non-totalistic test rules (M4 Pro) |
 | `--maxpop N` | spaceinvaders: skip soups whose population exceeds N |
 | `--maxgen N` | spaceinvaders: skip soups that haven't stabilised within N generations |
 | `--immediate ...` | start searching when the build finishes; the rest of the line goes to apgluxe, e.g. `--immediate -k KEY -n 5000000 -p 12` |

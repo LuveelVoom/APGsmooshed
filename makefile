@@ -28,6 +28,12 @@ C_FLAGS=$(COMPILER_FLAGS) -fomit-frame-pointer
 
 CPP_SOURCES=main.cpp includes/md5.cpp includes/happyhttp.cpp
 
+# Fast object separation unless recompile.sh --no-fast-separation
+# (APGsmooshed; see CHANGES.md)
+ifndef APG_NO_FAST_SEPARATION
+COMPILER_FLAGS += -DAPG_FAST_SEPARATION
+endif
+
 ifdef USE_GPU
 LD_FLAGS=
 CU_SOURCES=includes/gpusrc.cu

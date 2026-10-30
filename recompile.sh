@@ -22,6 +22,7 @@ rm -f "includes/params.h" | true
 rulearg=`echo "$@" | grep -o "\\-\\-rule [^ ]*" | sed "s/\\-\\-rule\\ //"`
 symmarg=`echo "$@" | grep -o "\\-\\-symmetry [^ ]*" | sed "s/\\-\\-symmetry\\ //"`
 profilearg=`echo "$@" | grep -o "\\-\\-profile" | sed "s/\\-\\-profile/u/"`
+nofastseparg=`echo "$@" | grep -o "\\-\\-no-fast-separation"` || true
 mingwarg=`echo "$@" | grep -o "\\-\\-mingw" | sed "s/\\-\\-mingw/u/"`
 gpuarg=`echo "$@" | grep -o "\\-\\-cuda" | sed "s/\\-\\-cuda/u/"`
 immarg=`echo "$@" | grep -o "\\-\\-immediate" | sed "s/\\-\\-immediate/u/"`
@@ -38,6 +39,13 @@ fi
 
 if [ "${#mingwarg}" -ne 0 ]; then
 export USE_MINGW=1
+fi
+
+# Faster object separation is the default; --no-fast-separation turns it
+# off (APGsmooshed; see CHANGES.md):
+if [ "${#nofastseparg}" -ne 0 ]; then
+export APG_NO_FAST_SEPARATION=1
+echo "Using upstream object separation (--no-fast-separation)."
 fi
 
 if [ "${#profilearg}" -ne 0 ]; then

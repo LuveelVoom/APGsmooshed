@@ -91,11 +91,177 @@
 
     bool iterate_var_leaf_rows(const uint32_t *d, uint64_t *outleafx);
 
+#if defined(LIFELIB_ISO_QL)
+    /*
+    * QuickLife-style kernel (experimental): a 64 KiB table from a 4x4 block
+    * (index: row k's 4 cells at bits 4k..4k+3, bit 0 = leftmost column) to
+    * its central 2x2 (bits 0-1 the upper row, 2-3 the lower row), built
+    * from lut9. Generation 2 of iterate_var_leaf2 runs straight on the
+    * 18x18 generation-1 block. (APGsmooshed; see CHANGES.md)
+    */
+    struct QLTable {
+        uint8_t t[65536];
+        QLTable() {
+            for (uint32_t i = 0; i < 65536; i++) {
+                uint32_t v = 0;
+                for (int r = 1; r <= 2; r++) {
+                    for (int c = 1; c <= 2; c++) {
+                        uint64_t x = ((i >> (4 * r - 4 + c - 1)) & 7) | (((i >> (4 * r + c - 1)) & 7) << 6) |
+                                     (((uint64_t) ((i >> (4 * r + 4 + c - 1)) & 7)) << 12);
+                        v |= ((uint32_t) xfl9(x)) << ((r - 1) * 2 + c - 1);
+                    }
+                }
+                t[i] = v;
+            }
+        }
+    };
+
+    // One generation of rows r0..r0+n-1, columns c0..c0+m-1 (n, m even).
+    inline void ql_gen(const uint32_t *d, uint32_t *g, int r0, int n, int c0, int m) {
+        static const QLTable T;
+        for (int r = r0; r < r0 + n; r += 2) {
+            uint32_t a = d[r-1], b = d[r], c = d[r+1], e = d[r+2];
+            uint32_t o0 = 0, o1 = 0;
+            for (int x = c0; x < c0 + m; x += 2) {
+                int sh = x - 1;
+                uint32_t v = T.t[((a >> sh) & 15) | (((b >> sh) & 15) << 4) | (((c >> sh) & 15) << 8) | (((e >> sh) & 15) << 12)];
+                o0 |= (v & 3) << x; o1 |= ((v >> 2) & 3) << x;
+            }
+            g[r] = o0; g[r+1] = o1;
+        }
+    }
+
+    // Rows 8..23, columns 8..23 to the 16x16 Z-order output.
+    inline void ql_rows_to_z(const uint32_t *g, uint64_t *outleafx) {
+        uint8_t *b = (uint8_t*) outleafx;
+        for (int r = 0; r < 16; r++) {
+            uint32_t v = g[r + 8] >> 8;
+            b[(r >> 3) * 16 + (r & 7)] = v & 0xff;
+            b[(r >> 3) * 16 + 8 + (r & 7)] = (v >> 8) & 0xff;
+        }
+    }
+
+    bool iterate_var_leaf_compute(uint64_t *inleaves, uint64_t *outleafx) {
+        uint32_t d[32], g[32];
+        apg::z64_to_r32_sse2(inleaves, d);
+        ql_gen(d, g, 8, 16, 8, 16);
+        ql_rows_to_z(g, outleafx);
+        return false;
+    }
+
+    bool iterate_var_leaf2_compute(uint64_t *inleaves, uint64_t *outleafx) {
+        uint32_t d[32], g1[32], g2[32];
+        apg::z64_to_r32_sse2(inleaves, d);
+        ql_gen(d, g1, 7, 18, 7, 18);
+        ql_gen(g1, g2, 8, 16, 8, 16);
+        ql_rows_to_z(g2, outleafx);
+        return false;
+    }
+#elif defined(__ARM_NEON) && !defined(LIFELIB_NO_NEON_ISO)
+    /*
+    * NEON kernel: one cell per byte. lut9 (64 bytes) sits in four registers
+    * for tbl; a cell's 9-bit neighbourhood is split as in xfl9: the rows at
+    * and below it (3 + 3 bits) pick a lut9 byte, the row above (3 bits)
+    * picks the bit. Grids are 32 rows of GW bytes, column c at byte c + 8.
+    * (APGsmooshed; see CHANGES.md)
+    */
+    static const int NGW = 48;
+
+    // Rows rlo..rhi (all 32 columns) from the Z-ordered input. Tile (tr, tc)
+    // is word tc&1 | (tr&1)<<1 | (tc>>1)<<2 | (tr>>1)<<3 (byte = row, bit =
+    // column), so tiles 0,1 and 2,3 of a tile row are adjacent word pairs.
+    inline void neon_expand(const uint64_t *in, uint8_t *G, int rlo, int rhi) {
+        const uint8x16_t bits = {1,2,4,8,16,32,64,128,1,2,4,8,16,32,64,128};
+        const uint8x16_t one = vdupq_n_u8(1);
+        const uint8x16_t idx0 = {0,0,0,0,0,0,0,0,8,8,8,8,8,8,8,8};
+        for (int r = rlo; r <= rhi; r++) {
+            int tr = r >> 3;
+            const uint64_t *w = in + (((tr & 1) << 1) | ((tr >> 1) << 3));
+            uint8x16_t ix = vaddq_u8(idx0, vdupq_n_u8(r & 7));
+            uint8x16_t A = vld1q_u8((const uint8_t*) w), B = vld1q_u8((const uint8_t*) (w + 4));
+            vst1q_u8(G + r * NGW + 8, vandq_u8(vtstq_u8(vqtbl1q_u8(A, ix), bits), one));
+            vst1q_u8(G + r * NGW + 24, vandq_u8(vtstq_u8(vqtbl1q_u8(B, ix), bits), one));
+        }
+    }
+
+    // Horizontal triples: bit k = column c - 1 + k, for 16 (or 8) columns from c0.
+    inline uint8x16_t neon_hrow(const uint8_t *G, int r, int c0) {
+        const uint8_t *p = G + r * NGW + 8 + c0;
+        uint8x16_t h = vld1q_u8(p - 1);
+        h = vsliq_n_u8(h, vld1q_u8(p), 1);
+        return vsliq_n_u8(h, vld1q_u8(p + 1), 2);
+    }
+    inline uint8x8_t neon_hrow8(const uint8_t *G, int r, int c0) {
+        const uint8_t *p = G + r * NGW + 8 + c0;
+        uint8x8_t h = vld1_u8(p - 1);
+        h = vsli_n_u8(h, vld1_u8(p), 1);
+        return vsli_n_u8(h, vld1_u8(p + 1), 2);
+    }
+
+    // One generation of rows r0..r1, columns c0..c0+15 (neon_gen) or
+    // c0..c0+7 (neon_gen8), from G into H.
+    inline void neon_gen(const uint8x16x4_t &t, const uint8_t *G, uint8_t *H, int r0, int r1, int c0) {
+        uint8x16_t ha = neon_hrow(G, r0 - 1, c0), hb = neon_hrow(G, r0, c0);
+        for (int r = r0; r <= r1; r++) {
+            uint8x16_t hc = neon_hrow(G, r + 1, c0);
+            uint8x16_t x = vqtbl4q_u8(t, vsliq_n_u8(hb, hc, 3));
+            vst1q_u8(H + r * NGW + 8 + c0, vandq_u8(vshlq_u8(x, vnegq_s8(vreinterpretq_s8_u8(ha))), vdupq_n_u8(1)));
+            ha = hb; hb = hc;
+        }
+    }
+    inline void neon_gen8(const uint8x16x4_t &t, const uint8_t *G, uint8_t *H, int r0, int r1, int c0) {
+        uint8x8_t ha = neon_hrow8(G, r0 - 1, c0), hb = neon_hrow8(G, r0, c0);
+        for (int r = r0; r <= r1; r++) {
+            uint8x8_t hc = neon_hrow8(G, r + 1, c0);
+            uint8x8_t x = vqtbl4_u8(t, vsli_n_u8(hb, hc, 3));
+            vst1_u8(H + r * NGW + 8 + c0, vand_u8(vshl_u8(x, vneg_s8(vreinterpret_s8_u8(ha))), vdup_n_u8(1)));
+            ha = hb; hb = hc;
+        }
+    }
+
+    // Rows/columns 8..23 of G to the 16x16 Z-order output: shift each cell to
+    // its bit, then a vpaddq tree sums 8 rows into (row lo, row hi) byte pairs.
+    inline void neon_pack(const uint8_t *G, uint64_t *outleafx) {
+        const int8x16_t sh = {0,1,2,3,4,5,6,7,0,1,2,3,4,5,6,7};
+        const uint8x16_t perm = {0,2,4,6,8,10,12,14,1,3,5,7,9,11,13,15};
+        for (int b = 0; b < 2; b++) {
+            uint8x16_t v[8];
+            for (int k = 0; k < 8; k++) { v[k] = vshlq_u8(vld1q_u8(G + (8 + 8 * b + k) * NGW + 16), sh); }
+            uint8x16_t p0 = vpaddq_u8(v[0], v[1]), p1 = vpaddq_u8(v[2], v[3]);
+            uint8x16_t p2 = vpaddq_u8(v[4], v[5]), p3 = vpaddq_u8(v[6], v[7]);
+            uint8x16_t z = vpaddq_u8(vpaddq_u8(p0, p1), vpaddq_u8(p2, p3));
+            vst1q_u8((uint8_t*) (outleafx + 2 * b), vqtbl1q_u8(z, perm));
+        }
+    }
+
+    bool iterate_var_leaf_compute(uint64_t *inleaves, uint64_t *outleafx) {
+        uint8x16x4_t t = vld1q_u8_x4(lut9);
+        alignas(16) uint8_t G[32 * NGW], H[32 * NGW];
+        neon_expand(inleaves, G, 7, 24);
+        neon_gen(t, G, H, 8, 23, 8);
+        neon_pack(H, outleafx);
+        return false;
+    }
+
+    // Generation 1 on rows/columns 7..24 (columns 7..22 and 17..24), then
+    // generation 2 on 8..23.
+    bool iterate_var_leaf2_compute(uint64_t *inleaves, uint64_t *outleafx) {
+        uint8x16x4_t t = vld1q_u8_x4(lut9);
+        alignas(16) uint8_t G[32 * NGW], H[32 * NGW], J[32 * NGW];
+        neon_expand(inleaves, G, 6, 25);
+        neon_gen(t, G, H, 7, 24, 7);
+        neon_gen8(t, G, H, 7, 24, 17);
+        neon_gen(t, H, J, 8, 23, 8);
+        neon_pack(J, outleafx);
+        return false;
+    }
+#else
     bool iterate_var_leaf_compute(uint64_t *inleaves, uint64_t *outleafx) {
         uint32_t d[32];
         apg::z64_to_r32_sse2(inleaves, d);
         return iterate_var_leaf_rows(d, outleafx);
     }
+#endif
 
     /*
     * One generation from the 32 rows d (only rows 7..24, bits 7..24 are
@@ -270,6 +436,7 @@
         return false;
     }
 
+#if !defined(LIFELIB_ISO_QL) && !(defined(__ARM_NEON) && !defined(LIFELIB_NO_NEON_ISO))
     /*
     * Two generations at once (mantissa 2): 20x20 input window (rows/columns
     * 6..25) to the central 16x16. Generation 1 is needed on rows/columns
@@ -307,6 +474,8 @@
         }
         return iterate_var_leaf_rows(g1, outleafx);
     }
+
+#endif
 
     // Memo for iterate_var_leaf2, keyed on the 20x20 window (400 bits, 7
     // words). Same scheme as LeafMemo. (APGsmooshed; see CHANGES.md)
