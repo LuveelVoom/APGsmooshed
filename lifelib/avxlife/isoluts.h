@@ -477,12 +477,29 @@
 
 #endif
 
+    // Per-rule choice between 1- and 2-generation tile steps (APGsmooshed;
+    // see CHANGES.md): each thread counts hits of the memo below over its
+    // first WARM calls; below MIN_HIT percent, upattern goes back to
+    // 1-generation steps for that thread (twogen_ok()). Both paths are exact.
+    // Only the lut24 kernel gains from this: its misses are memory-bound. On
+    // the NEON and QuickLife kernels the default is 0, which compiles it out.
+    #ifndef APG_TWOGEN_MIN_HIT
+    #if defined(LIFELIB_ISO_QL) || (defined(__ARM_NEON) && !defined(LIFELIB_NO_NEON_ISO))
+    #define APG_TWOGEN_MIN_HIT 0
+    #else
+    #define APG_TWOGEN_MIN_HIT 85
+    #endif
+    #endif
+
     // Memo for iterate_var_leaf2, keyed on the 20x20 window (400 bits, 7
     // words). Same scheme as LeafMemo. (APGsmooshed; see CHANGES.md)
     struct LeafMemo2 {
         static const uint64_t BITS = 14;
+        static const uint64_t WARM = 1ull << 20;
         struct Entry { uint64_t key[7]; uint64_t val[4]; };
         Entry* t = 0;
+        uint64_t calls = 0, misses = 0;
+        bool enabled = true;
         Entry* get() {
             if (t == 0) {
                 t = (Entry*) std::malloc(sizeof(Entry) << BITS);
@@ -513,10 +530,20 @@
         uint64_t h = 0;
         for (int j = 0; j < 7; j++) { h += k[j] * (0x9E3779B97F4A7C15ull + 2 * j); }
         h ^= h >> 31; h *= 0xff51afd7ed558ccdull; h ^= h >> 29;
-        LeafMemo2::Entry &e = leafmemo2.get()[h >> (64 - LeafMemo2::BITS)];
-        if ((e.key[0] == k[0]) & (e.key[1] == k[1]) & (e.key[2] == k[2]) &
-            (e.key[3] == k[3]) & (e.key[4] == k[4]) & (e.key[5] == k[5]) &
-            (e.key[6] == k[6])) {
+        LeafMemo2 &m = leafmemo2;
+        LeafMemo2::Entry &e = m.get()[h >> (64 - LeafMemo2::BITS)];
+        bool hit = (e.key[0] == k[0]) & (e.key[1] == k[1]) & (e.key[2] == k[2]) &
+                   (e.key[3] == k[3]) & (e.key[4] == k[4]) & (e.key[5] == k[5]) &
+                   (e.key[6] == k[6]);
+    #if APG_TWOGEN_MIN_HIT > 0
+        if (m.calls < LeafMemo2::WARM) {
+            m.calls += 1; m.misses += (hit ? 0 : 1);
+            if (m.calls == LeafMemo2::WARM) {
+                m.enabled = (100 * (LeafMemo2::WARM - m.misses) >= APG_TWOGEN_MIN_HIT * LeafMemo2::WARM);
+            }
+        }
+    #endif
+        if (hit) {
             std::memcpy(outleafx, e.val, 32);
             return false;
         }
@@ -525,3 +552,10 @@
         std::memcpy(e.val, outleafx, 32);
         return r;
     }
+
+    // Whether upattern should use 2-generation steps in this thread.
+    #if APG_TWOGEN_MIN_HIT > 0
+    bool twogen_ok() { return leafmemo2.enabled; }
+    #else
+    bool twogen_ok() { return true; }
+    #endif

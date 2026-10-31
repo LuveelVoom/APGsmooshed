@@ -250,6 +250,9 @@ namespace apg {
             // the history layer, so steps with history are one generation.
             // (APGsmooshed; see CHANGES.md)
             if ((W == 16) && history) { vmb &= 3; }
+            // Rules where 2-generation leaves rarely hit their memo run
+            // faster with 1-generation steps (decided per thread).
+            if ((W == 16) && !uli_twogen_ok(rule)) { vmb &= 3; }
             while (grem > 0) {
                 uint64_t m = (grem >= 8) ? 8 : grem;
                 while (((vmb >> m) & 1) == 0) { m -= 1; }

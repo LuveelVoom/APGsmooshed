@@ -530,6 +530,17 @@ def generate_code(rules, clean_before=False):
         f.write('        return 3;\n')
         f.write('    }\n\n')
 
+        # Per-rule choice of 2-generation tile steps (APGsmooshed; see CHANGES.md):
+        f.write('    bool uli_twogen_ok(int rule) {\n')
+        f.write('        switch (rule) {\n')
+        for (i, (r, fam)) in enumerate(zip(rules, families)):
+            m = genera.rule_property(r, 'mantissa')
+            if (fam == 4) and hasattr(m, '__iter__') and (2 in m):
+                f.write('            case %d : return %s::twogen_ok();\n' % (i, r.replace('-', '_')))
+        f.write('        }\n')
+        f.write('        return true;\n')
+        f.write('    }\n\n')
+
         for hist in range(3):
             write_all_iterators(f, hist, rules, families)
 
