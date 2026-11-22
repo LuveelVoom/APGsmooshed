@@ -62,6 +62,56 @@ void partialBalancedSearch(std::vector<uint64_t> *vec, std::string seed, SoupSea
     }
 }
 
+#ifdef LEARNED_PERIOD
+// Set learnedPeriod from a census of `soups` soups (APGsmooshed; see CHANGES.md):
+// lcm of the periods of oscillator (xp) and ship (xq) apgcodes counted at least
+// once per 100 soups, added by total count while the lcm stays <= 1000. Off (0)
+// when the result divides 8 or 12, which phase I already tests. Called only at
+// 100000-soup boundaries, so a soup's result doesn't depend on the thread count.
+void updateLearnedPeriod(const std::map<std::string, int64_t> &census, uint64_t soups) {
+
+    if (soups < 100000) { return; }
+
+    std::map<int, int64_t> byPeriod;
+    for (const auto& kv : census) {
+        const std::string &code = kv.first;
+        if ((code.size() < 4) || (code[0] != 'x') || ((code[1] != 'p') && (code[1] != 'q'))) { continue; }
+        if (((uint64_t) kv.second) * 100 < soups) { continue; }
+        int p = 0;
+        size_t i = 2;
+        while ((i < code.size()) && (code[i] >= '0') && (code[i] <= '9')) { p = p * 10 + (code[i] - '0'); i++; }
+        if ((i == 2) || (i >= code.size()) || (code[i] != '_') || (p <= 0)) { continue; }
+        byPeriod[p] += kv.second;
+    }
+
+    std::vector<std::pair<int64_t, int>> order;
+    for (const auto& kv : byPeriod) { order.emplace_back(-kv.second, kv.first); }
+    std::sort(order.begin(), order.end());
+
+    int64_t L = 1;
+    std::ostringstream used;
+    for (const auto& x : order) {
+        int64_t p = x.second;
+        int64_t a = L, b = p;
+        while (b) { int64_t t = a % b; a = b; b = t; }
+        int64_t l = (L / a) * p;
+        if (l <= 1000) { L = l; used << " " << p; }
+    }
+    int newPeriod = ((12 % L == 0) || (8 % L == 0)) ? 0 : (int) L;
+
+    if (newPeriod != learnedPeriod.load()) {
+        learnedPeriod = newPeriod;
+        std::cout << "Learned stabilisation period: ";
+        if (newPeriod) {
+            std::cout << newPeriod << " (lcm of common periods" << used.str() << ")";
+        } else {
+            std::cout << "off (common periods" << used.str() << " divide 8 or 12)";
+        }
+        std::cout << " after " << soups << " soups." << std::endl;
+    }
+}
+#endif
+
 struct CpuSearcher {
 
     void pump(const std::string& seed, uint64_t j, std::vector<uint64_t> &vec) {
@@ -215,6 +265,11 @@ void perpetualSearch(uint64_t soupsPerHaul, int numThreads, bool interactive, co
             if (suffix != "") {
                 globalSoup.censusSoup(seed, suffix, ltc.cfier);
                 soupsCompletedSinceStart += 1;
+                #ifdef LEARNED_PERIOD
+                if (soupsCompletedSinceStart % 100000 == 0) {
+                    updateLearnedPeriod(globalSoup.census, soupsCompletedSinceStart);
+                }
+                #endif
             }
         } else {
             std::vector<SoupSearcher> localSoups(numThreads, SoupSearcher(&globalSoup));
@@ -263,6 +318,9 @@ void perpetualSearch(uint64_t soupsPerHaul, int numThreads, bool interactive, co
 
             if (running || (ts == nvec.size())) {
                 soupsCompletedSinceStart = newi;
+                #ifdef LEARNED_PERIOD
+                updateLearnedPeriod(globalSoup.census, soupsCompletedSinceStart);
+                #endif
             } else {
                 double diff = newi - soupsCompletedSinceStart;
                 uint64_t estim = (diff * ts) / nvec.size();

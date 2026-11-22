@@ -94,7 +94,7 @@ Building: `./recompile.sh [options]`
 | option | meaning |
 |---|---|
 | `--rule RULE` | rule to build for, e.g. `b3s23`, `B36/S23`, `b3-qr4k5cek6cs23-a4er56aek` (default `b3s23`) |
-| `--symmetry SYM` | `C1`, `D8_1`, `D2_+1`, ... (default `C1`). `SYM_spaceinvaders` turns on spaceinvaders (below) |
+| `--symmetry SYM` | `C1`, `D8_1`, `D2_+1`, ... (default `C1`). `SYM_spaceinvaders` turns on spaceinvaders (below); `SYM_smooshed_stabiliser` (also `SYM_smooshed_stabiliser_spaceinvaders`) the learned stabilisation period (below) |
 | `--profile` | profile-guided build: a short training haul, then a rebuild using its profile. +5..+38% on isotropic non-totalistic rules; leave it off for B3/S23 (about 8% slower) |
 | `--no-fast-separation` | use upstream's object separation, which adds an island's cells to its pattern one at a time, instead of building each pattern in one go (CHANGES.md section 3). Same census, but 18..40% fewer soups/s on the isotropic non-totalistic test rules (M4 Pro) |
 | `--maxpop N` | spaceinvaders: skip soups whose population exceeds N |
@@ -171,6 +171,32 @@ soups are counted per haul and shown in the progress lines and the haul summary:
 hauls. Different limits upload under the same name, so keep them consistent.
 The generation limit applies separately to each of the two stabilisation phases
 (the fork's behaviour, kept as is).
+
+Learned stabilisation period
+----------------------------
+
+    ./recompile.sh --rule b3-qr4k5cek6cs23-a4er56aek --symmetry C1_smooshed_stabiliser
+
+Stabilisation first tests whether the population repeats with period 8, 12,
+18, 24 or 30. Soups whose ash has another period (p42 plus c/4 ships in qr4k)
+fail that test for ~20000 generations before the exact test catches them. With
+`_smooshed_stabiliser`, after each 100000-soup batch the period L is set to the lcm
+of the periods of oscillators and ships counted at least once per 100 soups
+(added by count while L <= 1000), and stabilisation tries L after 40 ordinary
+steps. The first batch is the warm-up. Changes are printed:
+
+    Learned stabilisation period: 84 (lcm of common periods 2 4 42) after 100000 soups.
+
+Soups/s, -p 10, M4 Pro, after the warm-up: qr4k C1 6400 -> 15700, qr4k D8_1
+21500 -> 33000, b2-as12 C1 28000 -> 50000. Rules whose common periods divide
+8 or 12 (most Life-like ash) are unaffected; L is then off.
+
+The census differs from the original's in a small fraction of soups (about
+0.07% for qr4k C1), because stopping earlier or later changes which late
+reactions happen before the census (a ship counted as a ship, or as the debris
+of a later crash). So hauls upload as `<symmetry>_smooshed_stabiliser`. Within this
+mode the census doesn't depend on the thread count, as long as haul sizes are
+multiples of 100000. Not available for stdin or GPU symmetries.
 
 "Failed to detect periodic behaviour!" (British spelling) without spaceinvaders
 is upstream's message for a soup still unsettled after 120000 generations; it is

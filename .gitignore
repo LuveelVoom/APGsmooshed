@@ -18,3 +18,4 @@ apgluxe-crashes.log
 # python
 __pycache__/
 **/*.pyc
+tools/metal/gpuA

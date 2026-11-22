@@ -83,6 +83,18 @@ fi
 ;;
 esac
 
+# "<sym>_smooshed_stabiliser" (also "<sym>_smooshed_stabiliser_spaceinvaders"): stabilisation
+# also tests a period learned from the census; the census differs slightly from
+# the original's, so it uploads under that name (APGsmooshed; see CHANGES.md).
+export APG_LEARNED_PERIOD=0
+case "$symmarg" in
+*_smooshed_stabiliser)
+symmarg="${symmarg%_smooshed_stabiliser}"
+export APG_LEARNED_PERIOD=1
+echo "Symmetry ${symmarg}_smooshed_stabiliser requested: learned stabilisation period on."
+;;
+esac
+
 if [ "${#maxpoparg}" -eq 0 ] && [ "${#maxgenarg}" -eq 0 ]; then
 echo "Maximum population and maximum generation unspecified; assuming no spaceinvaders."
 fi

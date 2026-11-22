@@ -226,6 +226,237 @@ Findings:
   (time limit), so the CPU still pays. Need more soups per rule to estimate this
   tail reliably.
 
+### Per-tile periods vs one global L (2026-11-21)
+
+Idea: instead of one global L for the whole universe, each tile may settle with
+its own period from a set {lcm(p, 6) : p common, <= cap} (plus the global L).
+Implementation needs only one snapshot per tile: snapshot at step T, compare at
+every 6-generation boundary T+6k, accept a match only if 6k is in the set,
+re-snapshot after T+cap. So memory is the same as now; only the wait grows.
+
+Fresh logs (old ones lost): instrumented copy of the tree (`APG_SOUPLOG` in
+`censusSoup`, scratchpad only), single thread per rule, 4 rules in parallel
+next to a 10-thread search, so per-soup times are noisy. Script:
+`tools/gpufilter_multiL.py` (warm-up 60%, test 40%, common = 0.1% of warm-up,
+ships deleted, global L starts at 6). "Per-tile" scores per object (each
+period divides some member), which is optimistic: it ignores tiles holding
+two oscillators that only fit different members.
+
+| rule (C1 unless noted) | soups | global L, cap 240 | per-tile, cap 240 | global, cap 1200 | per-tile, cap 1200 |
+|---|---|---|---|---|---|
+| qr4k | 63.5k | 160x (L=42) | 4281x | 4281x (L=378) | 4281x |
+| b2-as12 | 100k | 5x (L=84) | 8x | 8x (L=1092) | 893x (708 for p236) |
+| b2e... | 40k | 35x (L=24) | 35x | 35x | 35x |
+| b3s23-q4i / D4_+4 | 100k | 698x (L=6) | same | same | same |
+| b35ys23 | 20k | 132x (L=6) | same | same | same |
+| b2n3-q5y6cs23-k | 15k | 7x (L=204) | 9x | 9x | 9x |
+| b2ci3ai4c8s02ae3eijkq4iz5ar6i7e | 15k | 215x (L=6) | same | same | same |
+
+- Per-tile helps exactly where common periods are coprime-ish and large:
+  as12 (p14, p26, p236), qr4k (p27 with p42). Elsewhere it changes nothing.
+- b2n3: still 9x. Remaining blockers are a ship below the threshold
+  (xq4_26psk) and yl puffers, which must be forwarded anyway.
+- b2e: blocked by rare p7/p28 oscillators (xp7_64hah4c, xp28_5i8g4a, ...),
+  not by L.
+- b2ci 215x is misleading: soup 1359 (0.60 s of 1.31 s total) is in the
+  warm-up part of this log. With it in the test part the bound is ~2x again.
+- Values above ~100x rest on 2-10 forwarded soups.
+- "Lost" (discarded soups containing an object below the common threshold)
+  is large at 0.1%: as12 ~3000 of 40000 test soups, b2e ~1100 of 16000,
+  q4i 111 of 40000. Mostly rare still lifes and low-period oscillators; the
+  same property as the Life GPU search. Per-tile adds almost nothing to it.
+
+### On-the-fly learning (2026-11-21)
+
+Simulation on the same logs: `tools/gpufilter_online.py`. Warm-up 2000 soups
+(0.1% threshold), then the filter is updated every 1000 soups from forwarded
+soups only: an object seen in M forwarded soups is admitted (period lcm(p, 6)
+<= 1200 into the tile set, or ship into the ship table); yl/zz never.
+"missed" = distinct objects in the log never censused (seen >= 2 times in a
+full census).
+
+| rule | no learning: last 40% / missed | M=5: last 40% / missed | M=2: last 40% |
+|---|---|---|---|
+| qr4k | 160x / 54 | 6053x / 54 | 6053x |
+| b2-as12 | 893x / 599 | same | same |
+| b2e | 35x / 246 | 374x / 279 | 460x |
+| b3s23-q4i D4_+4 | 698x / 26 | 3601x / 26 | 5919x |
+| b35ys23 | 79x / 4 | 218x / 4 | 1068x |
+| b2n3-q5y6cs23-k | 9x / 9 | 9x / 9 | 9x |
+| b2ci... | 215x / 9 | same | same |
+
+- Learning helps most where ships/periods sit just under the warm-up
+  threshold (b2e, q4i, qr4k). It cannot help b2n3 (remaining blockers are yl
+  puffers) or the b2ci tail soup.
+- Extra loss from learning is small (b2e +33 objects, others +0..+3).
+- The big loss is structural and exists without learning: still lifes and
+  oscillators of admitted periods are never censused, rare or not (as12:
+  599 objects seen >= 2 times are never censused, e.g. xs12_221q20r4,
+  xp26_gglglggzwa0a). Same property as the Life GPU search, so the census is
+  a different thing from a C1 census.
+- Warm-up 20000 instead of 2000 (8000 for the 15-20k logs): with learning
+  on (M=5 or 2) the last-40% bounds are the same within noise (qr4k 6053x,
+  q4i 3601x/5919x, b2e 374x/449x vs 460x, b2n3 9x, b2ci 215x); learning
+  converges to the same settings. Without learning the bigger warm-up helps
+  (qr4k 160x -> 4281x, b35y 79x -> 132x). Lower "missed" with the bigger
+  warm-up only reflects the extra fully censused warm-up soups.
+- Admitting a period discards every oscillator of that period; GPU ship
+  deletion matches (p, dx, dy) plus a small population, so admitting a ship
+  also discards other small ships of that velocity. Learn ships more freely
+  than periods.
+
+### Metal Phase A: raw throughput (2026-11-21)
+
+`tools/metal/gpuA.mm` (+ `mktable.py`, `checkdump.py`, `test.sh`). Standalone:
+many N x N torus universes, one threadgroup per universe, one thread per row,
+all generations in threadgroup memory. Kernels: generic 512-entry LUT (any
+non-B0 rule, table baked into the source) and hand-written bitsliced B3/S23.
+Shaders compile at runtime (`newLibraryWithSource`), so no Xcode is needed.
+Soups: 16x16 at density 1/2 from a xorshift PRNG (not apgluxe's SHA-256 soups).
+`test.sh`: GPU vs CPU reference bit-exact (30 and 500 gens, torus wrap) and
+CPU reference vs casim (30 gens) on B3/S23, qr4k, a shift-NE MAP rule (a
+mirrored rule is caught) and a random MAP rule; all pass.
+
+Measured (M4 Pro, 20 GPU cores, 16384 universes, 3 runs, noise ~1-2%,
+search suspended, Firefox video decoding in the background), cell-gens/s:
+
+| kernel | WB=32, N=64 | WB=64, N=64 | WB=32, N=128 | WB=64, N=128 |
+|---|---|---|---|---|
+| LUT (qr4k) | 1.67e11 | 1.61e11 | 3.4e10 | 1.10e11 |
+| bitsliced B3/S23 | 2.78e12 | 2.64e12 | 2.95e12 | 2.65e12 |
+
+- 64-bit words cost only ~5-10% against 32-bit in the bitsliced kernel.
+- LUT is ~17-25x slower than bitsliced Life. LUT WB=32 at N=128 is 3x slower
+  than WB=64 (register spill from the full 128-cell unroll, inferred; not
+  investigated).
+- CPU baseline: clean qr4k C1 build, 10 threads: 6600 soups/s (300k soups).
+- Generations to stabilisation in apgluxe (`stabilise3`, counter in a
+  scratchpad copy, 5000 qr4k soups): mean 4931, median 620, but 985 of the
+  986 soups with xp42_2his take > 10000 (apgluxe's periodicity test is slow
+  on p42; a GPU compare at t+42 would settle them early). Without them:
+  mean 836, median 472, p90 1300.
+- At ~1000 gens/soup the GPU screens: LUT 64x64 ~40k soups/s (6x CPU), LUT
+  128x128 ~6.7k (1x), bitsliced Life speed 128x128 ~160k (24x), 64x64 ~650k.
+  A generated INT circuit is likely 2-4x Life's op count (inferred), so
+  ~40-80k soups/s at 128x128.
+- B3/S23-a5 and B3/S23-q4i (C1): LUT throughput is rule-independent (same
+  1.6e11 / 1.1e11 cell-gens/s). CPU (clean build, 10 threads, 500k soups):
+  a5 88.7k soups/s, q4i 174k. Stabilisation gens (20k soups): a5 mean 398,
+  median 320, p99 1324; q4i mean 157, median 124, p99 512. GPU screening at
+  the mean: LUT 64x64 a5 ~100k (1.1x CPU), q4i ~254k (1.5x); LUT 128x128
+  0.2-0.25x; bitsliced Life speed 64x64 18-24x, 128x128 4.6-5.9x. For
+  Life-like-ash rules the CPU is fast, so only a bitsliced kernel with small
+  boxes helps.
+- So the LUT kernel is only worth it with small boxes; a bitsliced INT kernel
+  (Phase C) and an active-tile layout (cost by active area, not box) are
+  what make the GPU clearly faster.
+
+### CPU: learned period in stabilisation (2026-11-21)
+
+Implemented as the opt-in `--symmetry <sym>_smooshed_stabiliser` build (README,
+CHANGES.md section 9). L is learned at runtime from the census (count-based
+threshold, cap 1000), so it can differ from the soup-based values in the
+tables below (qr4k D8_1 learns 756, not 108; both ~1.5x). Experiments:
+
+qr4k: the 20% of soups with xp42_2his take 81% of CPU time (6.1 ms vs
+0.34 ms). `naivestab_awesome` tests population periodicity at 12/8, later
+18/24/30, for up to 1000 iterations; none is a multiple of 42, so these
+soups run ~20000 gens before phase II (hashes every 30 gens) catches them.
+Experiment in a scratchpad copy (not in the repo): `APG_LEARNED_PERIOD=L`
+pre-pass (40 steps of L, stable after 8 equal populations) and
+`APG_NAIVE_CAP=K` (phase I iterations). Per-soup census vs original, single
+thread, seeds gpubench and stab2 (5000 qr4k soups, 20000 others):
+
+| variant | qr4k speed | soups with a different census |
+|---|---|---|
+| cap 100 | 0.87x / 0.94x | 7 / 4 |
+| cap 200 | 1.22x / 1.29x | 0 / 1 |
+| L=42 | 1.01x / 1.02x | 6 / 3 |
+| L=42 + cap 100 | 1.34x / 1.36x | 6 / 4 |
+| L=84 | 2.23x / 2.27x | 8 / 4 |
+| L=84 + cap 200 | 2.39x / 2.44x | 8 / 4 |
+| cap 100, b3s23-q4i | 0.93x / 1.00x | 0 / 0 |
+| cap 100, b3s23-a5 | 0.58x / 0.57x | 1 / 0 |
+
+- L must be a multiple of the ships' periods too (population of a c/4 ship
+  changes with period 4): L=42 does nothing, L=84 works. p42 soups go from
+  median 20446 to 1176 stabilisation gens, 6.1 ms to 1.6 ms.
+- A low cap alone is rejected: phase II is slower than phase I for slowly
+  settling soups (a5 0.58x).
+- Census differs in ~0.1% of soups (fewer xq2_4ra/xq4_27, more xs4_252,
+  xp2_*): stopping earlier misses late reactions, e.g. ships crashing into
+  far debris. Not identical to the original, so it would need an option,
+  off by default.
+
+Thorough run (same day). The learned test now runs after APG_LEARNED_AFTER
+ordinary phase I iterations and needs APG_LEARNED_CONFIRM equal populations.
+L = lcm of periods of oscillators and ships in >= 1% of soups (b2e capped at
+112). Single thread, 8 jobs in parallel; qr4k 3 seeds x 30000, others 2 x 20000.
+
+| rule (L) | confirm/after | speed | differing soups |
+|---|---|---|---|
+| qr4k (84) | 8/0 | 2.19-2.21x | 63 of 90000 |
+| qr4k (84) | 4/0 | 2.37-2.41x | 66 |
+| qr4k (84) | 8/40 | 2.30-2.33x | 62 |
+| qr4k (84) | 4/40 | 2.50-2.53x | 65 |
+| qr4k (84) | 8/80 | 2.48-2.51x | 55 |
+| b2-as12 (42) | 4/40, 8/40 | 1.76-1.83x | 0 of 40000 |
+| b2e (112) | 4/40, 8/40 | 1.02x | 0 |
+| b2n3-q5y6cs23-k (204) | 4/40 | 1.12x | 1 |
+| b3s23-q4i (12, control) | 4/40, 8/40 | 0.97-1.04x | 0 |
+
+- No object found by the original is missing from any variant's census.
+- The differences are stop-time artefacts in both directions: the variant
+  sometimes runs longer than the original and still differs (an xq2_4ra
+  counted as a ship before it crashes, xp2_f after). Neither census is
+  "the" correct one.
+- Clean builds, 10 threads, 300k soups, 2 runs: qr4k 6400 -> 15400 soups/s
+  (2.4x), b2-as12 28.2k -> 50.2k (1.78x).
+
+Other symmetries (confirm 4, after 40; 2 seeds x 15000; single thread, up to
+8 jobs in parallel plus some other load, so ~10% seed-to-seed noise). L from
+C1 vs L learned from that symmetry's own census (periods in >= 1% of soups):
+
+| rule, symmetry | C1 L | speed | own L | speed | differing soups |
+|---|---|---|---|---|---|
+| qr4k C2_4 | 84 | 2.02-2.06x | 84 | same | 13 of 30000 |
+| qr4k C4_4 | 84 | 1.78-1.84x | 84 | same | 19 |
+| qr4k D2_+1 | 84 | 1.85-1.88x | 84 | same | 9 |
+| qr4k D4_x1 | 84 | 1.56-1.57x | 756 | not tested | 5 |
+| qr4k D8_1 | 84 | 1.08-1.09x | 108 | 1.56-1.64x | 0 |
+| b2-as12 C2_4 | 42 | 1.65-1.84x | 42 | same | 0 |
+| b2-as12 C4_4 | 42 | 1.88-1.91x | 84 | 2.21-2.29x | 0 |
+| b2-as12 D2_+1 | 42 | 1.32-1.33x | 546 | 1.51x | 0 |
+| b2-as12 D4_x1 | 42 | 1.79-1.83x | 42 | same | 0 |
+| b2-as12 D8_1 | 42 | 1.14-1.16x | 42 | same | 0 |
+
+No object found by the original is missing anywhere. L must be learned per
+symmetry (symmetric soups make different common ash).
+
+### GPU: tile skipping estimate (2026-11-21)
+
+`tools/metal/activetiles.py` (NumPy, not GPU): 400 soups per rule in a
+128x128 box with an absorbing edge; a tile is stepped only if a cell changed
+in or next to it in the previous generation; the box stops when its state
+repeats with period L (checked every L gens).
+
+| rule (L) | box settle gens mean / median / p90 | 32x32 tiles | 16x16 tiles |
+|---|---|---|---|
+| B3/S23-q4i (12) | 174 / 132 / 324 | 5.2x less stepping | 15.6x |
+| B3/S23-a5 (60) | 462 / 420 / 720 | 5.1x | not run |
+| qr4k (84) | 690 / 588 / 1176 | 3.7x | 8.3x |
+
+- Correction to an earlier claim: the bitsliced Life kernel is ALU-bound
+  (~55 ops/word-gen at 8.7e10 word-gens/s ~ 4.8e12 ops/s, about the GPU's
+  integer peak [unsure: peak from memory]). Fewer barriers would give
+  10-20% at most. The levers are ops per cell (circuit) and cells stepped.
+- 32x32 tiles map to one SIMD group (uint32 rows, shuffles); skipping is a
+  uniform branch. 16x16 needs packing active tiles from many universes into
+  SIMD groups (the CUDA `compact_tiles` approach): more gain, much more code.
+- The absorbing edge deletes everything that reaches it (ash too), so these
+  settle times are a little optimistic for a real filter that forwards
+  edge-touching soups.
+
 ### Spaceinvaders
 
 - CPU speedups apply to spaceinvaders builds: same kernels, memo and

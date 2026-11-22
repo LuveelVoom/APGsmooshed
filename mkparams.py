@@ -1,5 +1,6 @@
 #!/usr/bin/python
 
+import os
 import sys
 import re
 
@@ -41,6 +42,11 @@ def main():
     validate_symmetry(rulestring, symmetry)
     print("Valid symmetry: \033[1;32m"+symmetry+"\033[0m")
 
+    # <sym>_smooshed_stabiliser (APGsmooshed; see CHANGES.md): set by recompile.sh.
+    learned = os.environ.get('APG_LEARNED_PERIOD', '') == '1'
+    if learned and (using_gpu or ('stdin' in symmetry)):
+        raise ValueError("Error: _smooshed_stabiliser is only for CPU searches with generated soups, not %s" % symmetry)
+
     if 'ikpx2' in symmetry:
         # Check isotropic:
         g = [x for x in genus_list if x['fullname'] == 'isotropic']
@@ -68,7 +74,9 @@ def main():
         g.write('#define PYTHON_VERSION "%s"\n' % repr(sys.version.replace('\n', ' ')))
         g.write('#define BITPLANES %d\n' % bitplanes)
         g.write('#define SYMMETRY "%s"\n' % symmetry)
-        g.write('#define SYMMETRY2 "%s"\n' % (symmetry + ("_spaceinvaders" if (spaceinvaders and "stdin" not in symmetry) else "")))
+        g.write('#define SYMMETRY2 "%s"\n' % (symmetry + ("_smooshed_stabiliser" if learned else "") + ("_spaceinvaders" if (spaceinvaders and "stdin" not in symmetry) else "")))
+        if learned:
+            g.write('#define LEARNED_PERIOD 1\n')
         g.write('#define RULESTRING "%s"\n' % rulestring)
         g.write('#define CLASSIFIER apg::base_classifier<BITPLANES>\n')
 

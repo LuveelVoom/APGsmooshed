@@ -458,3 +458,54 @@ Tried and rejected (soups/s, back to back unless noted, census identical)
 - mimalloc: not tested (it would have to be built from downloaded source).
 - Thread count: on the M4 Pro, -p 12..16 is about 6% above -p 10, and no
   further.
+
+
+9. Learned stabilisation period (`<sym>_smooshed_stabiliser`)
+-------------------------------------------------------
+
+Opt-in build, uploads under its own symmetry name because the census differs
+slightly. `recompile.sh` strips `_smooshed_stabiliser` (after `_spaceinvaders`) and
+sets `APG_LEARNED_PERIOD=1`; `mkparams.py` writes `LEARNED_PERIOD` and the
+suffixed `SYMMETRY2` (rejected for GPU and stdin symmetries). Code:
+`learnedPeriod` and the extra test at iteration 40 of `naivestab_awesome`
+(`includes/stabilise.h`), `updateLearnedPeriod` (`includes/searching.h`),
+called after each 100000-soup batch (threaded) or every 100000 soups (-p 0).
+Without the suffix nothing changes (code compiled out).
+
+Why: in qr4k C1 the 20% of soups with xp42_2his took 81% of CPU time
+(6.1 ms vs 0.34 ms per soup): phase I tests population periodicity at 12/8
+(later 18, 24, 30) for up to 1000 iterations, ~20000 generations, before
+phase II catches the p42. L must include ship periods (population of a c/4
+ship changes with period 4): L=42 alone gave 1.01x, L=84 2.2-2.5x.
+
+Rule for L: apgcodes xp<p>_/xq<p>_ with count >= soups/100, periods added in
+order of total count while lcm <= 1000; off when L divides 8 or 12. The test
+runs after 40 ordinary iterations and needs 4 equal populations at spacing L.
+
+Checked:
+- Normal builds: kat PASS (b2-as12/C1, qr4k/D8_1).
+- qr4k C1_smooshed_stabiliser, 400k soups, -p 10 vs the original on the same seed:
+  same 346 distinct objects; count shifts xq2_4ra -46, xp2_f +20, xp2_7 +19,
+  others <= 4. Census identical with -p 10 and -p 4 (400k), and for b2-as12
+  with -p 0 and -p 10 (200k).
+- Learned L: qr4k C1 84, b2-as12 C1 42, qr4k D8_1 756.
+- Soups/s, -p 10: qr4k C1 6400 -> ~15700 after warm-up, qr4k D8_1
+  21500 -> 31-33k, b2-as12 C1 28.2k -> 50.2k (experiment build).
+- `C1_smooshed_stabiliser_spaceinvaders` builds and runs (b2-as12, 14 of 200k
+  skipped).
+- New reference `tests/kat/libc++/b3-qr4k5cek6cs23-a4er56aek_C1_smooshed_stabiliser_200000.txt`
+  (from this build, identical on -p 10 and -p 4; a regression reference, not
+  from the original program). `tests/kat.sh` now looks up the uploaded
+  symmetry name first and requires the soup count right after the symmetry
+  (`<rule>_C1_*` would have matched the new file).
+
+Experiments before this design (single thread, per-soup census vs original,
+HANDOFF.md has the tables): capping phase I alone (0.57-1.29x, rejected);
+learned test before phase I (2.2-2.4x, slower than after 40 iterations); 8
+confirmations (slightly slower, similar differences); other symmetries
+1.1-2.3x with L learned per symmetry. Differing soups 0-0.07%, and no object
+found by the original was missing.
+
+Not checked: verification hauls (-v) of a `_smooshed_stabiliser` haul depend on L at
+the time of verification; haul sizes that aren't multiples of 100000 make the
+census depend on the thread count.

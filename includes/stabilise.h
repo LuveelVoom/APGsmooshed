@@ -9,6 +9,14 @@
 std::atomic<uint64_t> aperiodicSoups(0);
 #endif
 
+#ifdef LEARNED_PERIOD
+// Learned stabilisation period (APGsmooshed; see CHANGES.md): lcm of the
+// periods of the census's common oscillators and ships, set between batches
+// by updateLearnedPeriod (searching.h); 0 = off. Only in <sym>_smooshed_stabiliser
+// builds, whose census differs slightly from the original's.
+std::atomic<int> learnedPeriod(0);
+#endif
+
 /*
  * Stabilisation detection by checking for population periodicity:
  */
@@ -28,6 +36,39 @@ int naivestab_awesome(UPATTERN &pat) {
     #endif
 
     for (int i = 0; i < 1000; i++) {
+
+        #ifdef LEARNED_PERIOD
+        // After 40 ordinary iterations, try population periodicity with the
+        // learned period: soups whose ash has a period not dividing 8, 12,
+        // 18, 24 or 30 (e.g. p42 with c/4 ships) otherwise run all 1000
+        // iterations before phase II. (APGsmooshed; see CHANGES.md)
+        if (i == 40) {
+            int lper = learnedPeriod.load(std::memory_order_relaxed);
+            if (lper > 0) {
+                int lprev = -1, ldepth = 0;
+                for (int k = 0; k < 40; k++) {
+                    pat.advance(0, 0, lper);
+                    steps += lper;
+                    #ifdef MAXPOP
+                    if (pat.totalPopulation() > MAXPOP) {
+                        return 222222;
+                    } else if (steps > MAXGEN) {
+                        return 222222;
+                    }
+                    #endif
+                    #ifndef HASHLIFE_ONLY
+                    if (pat.modified.size() == 0) { return 2; }
+                    #endif
+                    int lpop = pat.totalPopulation();
+                    if (lpop == lprev) { ldepth += 1; } else { ldepth = 0; }
+                    lprev = lpop;
+                    if (ldepth == 4) { return lper; }
+                }
+                prevpop = 0;
+                depth = 0;
+            }
+        }
+        #endif
 
         if (i == 40) { security = 20; }
         if (i == 60) { security = 25; }
