@@ -1,3 +1,5 @@
+![APGsmooshed](apgsmooshed.png)
+
 APGsmooshed
 ===========
 
