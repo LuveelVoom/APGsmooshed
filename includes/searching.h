@@ -99,7 +99,11 @@ void updateLearnedPeriod(const std::map<std::string, int64_t> &census, uint64_t 
     }
     int newPeriod = ((12 % L == 0) || (8 % L == 0)) ? 0 : (int) L;
 
-    if (newPeriod != learnedPeriod.load()) {
+    // Print the first decision (also when it is "off", which leaves the
+    // initial 0 unchanged) and every change after that.
+    static bool announced = false;
+    if ((!announced) || (newPeriod != learnedPeriod.load())) {
+        announced = true;
         learnedPeriod = newPeriod;
         std::cout << "Learned stabilisation period: ";
         if (newPeriod) {
