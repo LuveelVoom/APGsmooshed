@@ -200,6 +200,20 @@ of a later crash). So hauls upload as `<symmetry>_smooshed_stabiliser`. Within t
 mode the census doesn't depend on the thread count, as long as haul sizes are
 multiples of 100000. Not available for stdin or GPU symmetries.
 
+Sample soups of suffixed symmetries
+-----------------------------------
+
+Catagolue generates sample soups from the symmetry name in the link and
+falls back to C1 soups for names it doesn't recognise, which includes every
+`_smooshed_stabiliser` and `_spaceinvaders` name. For C1 hauls the links work.
+For other symmetries they show the wrong soup: replace the suffixed name with
+the plain symmetry, e.g.
+
+    https://catagolue.hatsya.com/hashsoup/D8_1/<soup id>/<rule>
+
+instead of `.../hashsoup/D8_1_smooshed_stabiliser/...`. Soup IDs are
+unaffected; the search itself generates soups from the plain symmetry.
+
 "Failed to detect periodic behaviour!" (British spelling) without spaceinvaders
 is upstream's message for a soup still unsettled after 120000 generations; it is
 common in rules with replicators, e.g. B36/S23 with D8_1.

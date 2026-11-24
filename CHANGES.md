@@ -509,3 +509,14 @@ found by the original was missing.
 Not checked: verification hauls (-v) of a `_smooshed_stabiliser` haul depend on L at
 the time of verification; haul sizes that aren't multiples of 100000 make the
 census depend on the thread count.
+
+Known limitation (found 2026-11-24, documented in README, not fixed):
+Catagolue's sample-soup links (`/hashsoup/<sym>/<id>/<rule>`) match the
+symmetry name exactly and fall back to C1 soups for unknown names. Checked
+on b3s23, seed k_testseed123: `D8_1` gives 31x31, `D2_+1` 16x31, while
+`D8_1_smooshed_stabiliser`, `D2_+1_smooshed_stabiliser`, `D8_1_spaceinvaders`,
+`D8_1x`, `D8_1_test`, `D8_1stab` and `D8_1-stab` all give the same 16x16 soup
+as `C1`. So non-C1 suffixed hauls (also upstream-style `_spaceinvaders`) have
+broken sample links; no suffix avoids this. Alternatives not taken: restrict
+the suffixes to C1 in `mkparams.py`, or upload under the plain symmetry
+(mixes a slightly different census into the normal one).
