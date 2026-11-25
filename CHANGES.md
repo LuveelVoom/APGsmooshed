@@ -500,7 +500,7 @@ Checked:
   (`<rule>_C1_*` would have matched the new file).
 
 Experiments before this design (single thread, per-soup census vs original,
-HANDOFF.md has the tables): capping phase I alone (0.57-1.29x, rejected);
+dev/HANDOFF.md has the tables): capping phase I alone (0.57-1.29x, rejected);
 learned test before phase I (2.2-2.4x, slower than after 40 iterations); 8
 confirmations (slightly slower, similar differences); other symmetries
 1.1-2.3x with L learned per symmetry. Differing soups 0-0.07%, and no object
